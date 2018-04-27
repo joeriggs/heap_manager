@@ -55,13 +55,13 @@ static void sizeTreeTraverse(SizeTree *tree)
 	}
 
 	sizeTreeTraverse(tree->left);
-	printf("size %ld: ptr ( ", tree->size);
+	fprintf(stderr, "size %ld: ptr ( ", tree->size);
 	SizeTree *node = tree;
 	while(node) {
-		printf("%p ", node->ptr);
+		fprintf(stderr, "%p ", node->ptr);
 		node = node->list;
 	}
-	printf(")\n");
+	fprintf(stderr, ")\n");
 	sizeTreeTraverse(tree->right);
 }
 
@@ -222,7 +222,7 @@ static void addrTreeTraverse(AddrTree *tree)
 	}
 
 	addrTreeTraverse(tree->left);
-	printf("addr %p\n", tree->ptr);
+	fprintf(stderr, "addr %p\n", tree->ptr);
 	addrTreeTraverse(tree->right);
 }
 
@@ -361,25 +361,25 @@ void *shmHeapMalloc(size_t size)
 	SizeTree *sizeTreeNode = 0;
 	sizeTreeFindNode(sizeTreeRoot, size, &sizeTreeNode);
 	if(sizeTreeNode == 0) 	{
-		printf("%s(): ERROR: Out of memory.\n", __func__);
+		fprintf(stderr, "%s(): ERROR: Out of memory.\n", __func__);
 		return (void *) NULL;
 	}
 
 	int success = 0;
 	sizeTreeRoot = sizeTreeRemoveNode(sizeTreeRoot, sizeTreeNode, &success);
 	if(success == 0) {
-		printf("%s(): Didn't find matching size node\n", __func__);
+		fprintf(stderr, "%s(): Didn't find matching size node\n", __func__);
 	}
 
 	AllocStruct *curr = sizeTreeNode->ptr;
 	if(curr->magic != SHM_HEAP_MAGIC) {
-		printf("%s(): Invalid header.\n", __func__);
+		fprintf(stderr, "%s(): Invalid header.\n", __func__);
 	}
 
 	success = 0;
 	addrTreeRoot = addrTreeRemove(addrTreeRoot, &curr->addrTreeNode, &success);
 	if(success == 0) {
-		printf("%s(): Didn't find matching addr node\n", __func__);
+		fprintf(stderr, "%s(): Didn't find matching addr node\n", __func__);
 	}
 
 	/* Calculate the total number of bytes required to service this alloc
@@ -427,7 +427,7 @@ void shmHeapFree(void *ptr)
 	AllocStruct *curr;
 	curr = (AllocStruct *) ((unsigned char *) ptr - AllocStructDataOffset);
 	if(curr->magic != SHM_HEAP_MAGIC) {
-		printf("%s(): Invalid header.\n", __func__);
+		fprintf(stderr, "%s(): Invalid header.\n", __func__);
 		return;
 	}
 
@@ -437,17 +437,17 @@ void shmHeapFree(void *ptr)
 	AllocStruct *next = (AllocStruct *) ((unsigned char *) curr +
 	                    AllocStructDataOffset + curr->size);
 	if(next->magic != SHM_HEAP_MAGIC) {
-		printf("%s(): Invalid header.\n", __func__);
+		fprintf(stderr, "%s(): Invalid header.\n", __func__);
 		return;
 	}
 	if(next->allocated == 0) {
 		int success = 0;
 		sizeTreeRoot = sizeTreeRemoveNode(sizeTreeRoot, &next->sizeTreeNode, &success);
-		printf("REMOVED succ sizeTreeNode?  %d\n", success);
+		fprintf(stderr, "REMOVED succ sizeTreeNode?  %d\n", success);
 
 		success = 0;
 		addrTreeRoot = addrTreeRemove(addrTreeRoot, &next->addrTreeNode, &success);
-		printf("REMOVED succ addrTreeNode?  %d\n", success);
+		fprintf(stderr, "REMOVED succ addrTreeNode?  %d\n", success);
 
 		curr->size += next->size + sizeof(AllocStruct);
 		memset(next, 0, sizeof(*next));
@@ -463,11 +463,11 @@ void shmHeapFree(void *ptr)
 		if(prev->allocated == 0) {
 			int success = 0;
 			sizeTreeRoot = sizeTreeRemoveNode(sizeTreeRoot, &prev->sizeTreeNode, &success);
-			printf("REMOVED pred sizeTreeNode?  %d\n", success);
+			fprintf(stderr, "REMOVED pred sizeTreeNode?  %d\n", success);
 
 			success = 0;
 			addrTreeRoot = addrTreeRemove(addrTreeRoot, &prev->addrTreeNode, &success);
-			printf("REMOVED pred addrTreeNode?  %d\n", success);
+			fprintf(stderr, "REMOVED pred addrTreeNode?  %d\n", success);
 
 			size_t prevSize = prev->size + curr->size + sizeof(AllocStruct);
 			memset(curr, 0, sizeof(*curr));
