@@ -1,68 +1,152 @@
+/*******************************************************************************
+ * This test program is based very closely on the Heap-Manager project that is
+ * located at https://github.com/sandmman/Heap-Manager .  It's a good test
+ * program.  Thanks to the author for writing it and making it available.
+ ******************************************************************************/
+
+#include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <unistd.h>
 
 #include "shmHeap.h"
 
-#undef TEST1
-#undef TEST2
-#undef TEST3
-#undef TEST4
-#define TEST5
+#define DEBUG printf
+
+#define RAND() ((double)random()/RAND_MAX)
+#define SEED(x) (srandom((x)))
+
+#define BUFLEN (1000)
+
+#define LOOPCNT (50000)
+
+/* You can play around with these number to get different tests. */
+#define MAX_HEAP_SIZE	(1024*1024*64)
+#define MAX_ALLOC_SIZE (MAX_HEAP_SIZE/1000)
+
+/* Set to 1 for non-deterministic seeding after each execution */
+#define PSEUDO_RANDOM_SEED	1
+
+#define ALLOC_CONST	0.5
 
 /* Test program. */
 int main(int argc, char **argv)
 {
 	printf("Heap manager\n");
 
-	/* This is our heap. */
-	static unsigned char h1[1000]; printf("%s(): h1 %p\n", __func__, h1); shmHeapInit(h1, sizeof(h1));
-	static unsigned char h5[ 500]; printf("%s(): h5 %p\n", __func__, h5); shmHeapInit(h5, sizeof(h5));
-	static unsigned char h2[4000]; printf("%s(): h2 %p\n", __func__, h2); shmHeapInit(h2, sizeof(h2));
-	static unsigned char h3[4000]; printf("%s(): h3 %p\n", __func__, h3); shmHeapInit(h3, sizeof(h3));
-	static unsigned char h4[9000]; printf("%s(): h4 %p\n", __func__, h4); shmHeapInit(h4, sizeof(h4));
-
+	static unsigned char test6Heap[MAX_HEAP_SIZE];
+	printf("%s(): test6Heap %p\n", __func__, test6Heap);
+	shmHeapInit(test6Heap, sizeof(test6Heap));
 	shmHeapDisp();
 
-#ifdef TEST1
-	void *p1 = shmHeapMalloc(50); printf("%s(): p1 = %p\n", __func__, p1);
-	void *p2 = shmHeapMalloc(50); printf("%s(): p2 = %p\n", __func__, p2);
-	void *p3 = shmHeapMalloc(50); printf("%s(): p3 = %p\n", __func__, p3);
-	void *p4 = shmHeapMalloc(50); printf("%s(): p4 = %p\n", __func__, p4);
+	int size;
+	int itr;
+	void *ptr[BUFLEN];
+	int i,j;
+	double randvar;
+	int fail = 0;
+        long int global[LOOPCNT][2];
 
-	shmHeapFree(p1);
-	shmHeapFree(p2);
-	shmHeapFree(p3);
-	shmHeapFree(p4);
-#elif defined(TEST2)
-	void *p1 = shmHeapMalloc(50); printf("%s(): p1 = %p\n", __func__, p1);
-	void *p2 = shmHeapMalloc(50); printf("%s(): p2 = %p\n", __func__, p2);
-	void *p3 = shmHeapMalloc(50); printf("%s(): p3 = %p\n", __func__, p3);
-	void *p4 = shmHeapMalloc(50); printf("%s(): p4 = %p\n", __func__, p4);
+	clock_t begin, end;
+	double time_spent;
 
-	shmHeapFree(p3);
-	shmHeapFree(p2);
-	shmHeapFree(p4);
-	shmHeapFree(p1);
-#elif defined(TEST3)
-	void *p1 = shmHeapMalloc(50); printf("%s(): p1 = %p\n", __func__, p1); shmHeapFree(p1);
-	void *p2 = shmHeapMalloc(50); printf("%s(): p2 = %p\n", __func__, p2); shmHeapFree(p2);
-	void *p3 = shmHeapMalloc(50); printf("%s(): p3 = %p\n", __func__, p3); shmHeapFree(p3);
-	void *p4 = shmHeapMalloc(50); printf("%s(): p4 = %p\n", __func__, p4); shmHeapFree(p4);
-#elif defined(TEST4)
-	void *p1 = shmHeapMalloc(700); printf("%s(): p1 = %p\n", __func__, p1); shmHeapFree(p1);
-#elif defined(TEST5)
-	void *ptrs[100];
-	int i;
-	for(i = 0; i < 100; i++) {
-		ptrs[i] = shmHeapMalloc(17 * 1);
-		printf("%s(): ptrs[%d] = %p\n", __func__, i, ptrs[i]);
-		shmHeapDisp();
+	for(j = 0; j < LOOPCNT; j++) {
+		global[j][0] = -1;
+		global[j][1] = -1;
 	}
-	for(i = 0; i < 100; i++) {
-		shmHeapFree(ptrs[i]);
+
+	/* Set the PSEUDO_RANDOM_SEED for pseduo random seed initialization based on time, i.e.,
+ 	 * the random values changes after each execution
+ 	 */
+	if(PSEUDO_RANDOM_SEED)
+		SEED(time(NULL));
+
+	assert(MAX_HEAP_SIZE >= 1024*1024 && "MAX_HEAP_SIZE is too low; Recommended setting is at least 1MB for test_stress2");
+
+	for(i=0; i < BUFLEN; i++) {
+		ptr[i] = NULL;
 	}
-#endif
+
+	begin = clock();
+
+	i = 0;
+	while(i < LOOPCNT) {
+		DEBUG("\nCNT %li\n",i);
+		itr = (int)(RAND() * BUFLEN);
+
+		randvar = RAND();
+
+		if(randvar < ALLOC_CONST && ptr[itr] == NULL) {
+			DEBUG("Attempting an allocate\n");
+			size = (int)(RAND() * MAX_ALLOC_SIZE);
+			if(size > 0) {
+				ptr[itr] = shmHeapMalloc(size);
+				//memset(ptr[itr], 0, size);
+			}
+			else
+				continue;
+			if(ptr[itr] == NULL) {
+				DEBUG("malloc at iteration %d failed for size %d\n", i,size);
+				fflush(stderr);
+				++fail;
+				continue;
+			}
+			/* Range check */
+			for(j = 0; j < i; j++) {
+				if(global[j][0] == -1) {
+					continue;
+				}
+				if(((long int) ptr[itr] >= global[j][0]) && ((long int) ptr[itr]+size <= global[j][1])) {
+					printf("[s] = %ld, [e] = %ld, [p] = %ld, [itr] = %d, [size] = %ld\n", global[j][0], global[j][1], ptr[itr], i, size);
+					printf("Correctness check failed\n");
+					exit(EXIT_FAILURE);
+				}
+			}
+			global[i][0] = (long int) ptr[itr];
+			global[i][1] = (long int) ptr[itr] + size;
+			printf("Assigned: [s] = %ld, [e] = %ld, [p] = %ld, [itr] = %d, [size] = %ld\n", global[i][0], global[i][1], ptr[itr],i, size);
+
+		} else if(randvar >= ALLOC_CONST && ptr[itr] != NULL) {
+			DEBUG("Freeing ptr[%d]\n", itr);
+			for(j = 0; j < i; j++) {
+				if(global[j][0] == (long int) ptr[itr]) {
+					global[j][0] = -1;
+					global[j][1] = -1;
+				}
+			}
+			shmHeapFree(ptr[itr]);
+			ptr[itr] = NULL;
+		}
+		else {
+			DEBUG("Fell through.  Try again\n");
+			continue;
+		}
+
+		i++;
+	}
+
+	/*
+	 * now -- free them
+ 	 */
+	for(i=0; i < BUFLEN; i++) {
+		if(ptr[i] != NULL) {
+			shmHeapFree(ptr[i]);
+			ptr[i] = NULL;
+		}
+	}
+	end = clock();
+
+	//print_freelists();
+	DEBUG("\n");
+	time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+
+	printf("Test case summary\n");
+	printf("Loop count: %d, malloc successful: %d, malloc failed: %d, execution time: %g seconds\n\n", LOOPCNT, LOOPCNT-fail, fail, time_spent);
+
+	printf("Stress testcases3 passed!\n");
 
 	shmHeapDisp();
 	return 0;

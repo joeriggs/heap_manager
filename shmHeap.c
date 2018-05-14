@@ -174,7 +174,7 @@ static SizeTree *sizeTreeRemoveNode(SizeTree *tree, SizeTree *node, int *success
 		 /* If our "node" is on the "list" for the size we're staring at,
 		  * just remove it from the list.  The tree doesn't change. */
 		else if(tree->size == node->size) {
-			SizeTree *n = node;
+			SizeTree *n = tree;
 			while(n) {
 				if(n->list == node) {
 					n->list = node->list;
@@ -372,18 +372,18 @@ static void *_shmHeapMalloc(size_t size)
 	int success = 0;
 	sizeTreeRoot = sizeTreeRemoveNode(sizeTreeRoot, sizeTreeNode, &success);
 	if(success == 0) {
-		fprintf(stderr, "%s(): Didn't find matching size node\n", __func__);
+		fprintf(stderr, "%s(): ERROR: Didn't find matching size node\n", __func__);
 	}
 
 	AllocStruct *curr = sizeTreeNode->ptr;
 	if(curr->magic != SHM_HEAP_MAGIC) {
-		fprintf(stderr, "%s(): Invalid header.\n", __func__);
+		fprintf(stderr, "%s(): ERROR: Invalid header.\n", __func__);
 	}
 
 	success = 0;
 	addrTreeRoot = addrTreeRemove(addrTreeRoot, &curr->addrTreeNode, &success);
 	if(success == 0) {
-		fprintf(stderr, "%s(): Didn't find matching addr node\n", __func__);
+		fprintf(stderr, "%s(): ERROR: Didn't find matching addr node\n", __func__);
 	}
 
 	/* Calculate the total number of bytes required to service this alloc
@@ -431,7 +431,7 @@ static void _shmHeapFree(void *ptr)
 	AllocStruct *curr;
 	curr = (AllocStruct *) ((unsigned char *) ptr - AllocStructDataOffset);
 	if(curr->magic != SHM_HEAP_MAGIC) {
-		fprintf(stderr, "%s(): Invalid header.\n", __func__);
+		fprintf(stderr, "%s(): ERROR: Invalid header.\n", __func__);
 		return;
 	}
 
@@ -441,17 +441,23 @@ static void _shmHeapFree(void *ptr)
 	AllocStruct *next = (AllocStruct *) ((unsigned char *) curr +
 	                    AllocStructDataOffset + curr->size);
 	if(next->magic != SHM_HEAP_MAGIC) {
-		fprintf(stderr, "%s(): Invalid header.\n", __func__);
+		fprintf(stderr, "%s(): ERROR: Invalid header.\n", __func__);
 		return;
 	}
 	if(next->allocated == 0) {
 		int success = 0;
 		sizeTreeRoot = sizeTreeRemoveNode(sizeTreeRoot, &next->sizeTreeNode, &success);
-		fprintf(stderr, "REMOVED succ sizeTreeNode?  %d\n", success);
+		fprintf(stderr, "REMOVED sizeTreeNode %p? %d\n", &next->sizeTreeNode, success);
+		if(success == 0) {
+			fprintf(stderr, "ERROR: Unable to locate sizeTreeNode.\n");
+		}
 
 		success = 0;
 		addrTreeRoot = addrTreeRemove(addrTreeRoot, &next->addrTreeNode, &success);
-		fprintf(stderr, "REMOVED succ addrTreeNode?  %d\n", success);
+		fprintf(stderr, "REMOVED addrTreeNode %p? %d\n", &next->addrTreeNode, success);
+		if(success == 0) {
+			fprintf(stderr, "ERROR: Unable to locate addrTreeNode.\n");
+		}
 
 		curr->size += next->size + sizeof(AllocStruct);
 		memset(next, 0, sizeof(*next));
@@ -463,15 +469,24 @@ static void _shmHeapFree(void *ptr)
 	AddrTree *pred = NULL;
 	addrTreeFindPredecessor(addrTreeRoot, &curr->addrTreeNode, &pred);
 	if(pred) {
+		/* Set prev to the predecessor.  Note that this refers to the
+		 * previous block that is unallocated.  We now need to look and
+		 * see if that block is adjacent to the block we're freeing. */
 		AllocStruct *prev = pred->ptr;
-		if(prev->allocated == 0) {
+		fprintf(stderr, "prev->magic = %08x: prev->allocated = %d\n", prev->magic, prev->allocated);
+
+		AllocStruct *prev2 = (AllocStruct *) ((unsigned char *) prev + sizeof(AllocStruct) + prev->size);
+		fprintf(stderr, "prev2->magic = %08x: prev2->allocated = %d\n", prev2->magic, prev2->allocated);
+
+		fprintf(stderr, "prev2 %p : curr %p\n", prev2, curr);
+		if(prev2 == curr) {
 			int success = 0;
 			sizeTreeRoot = sizeTreeRemoveNode(sizeTreeRoot, &prev->sizeTreeNode, &success);
-			fprintf(stderr, "REMOVED pred sizeTreeNode?  %d\n", success);
+			fprintf(stderr, "REMOVED pred sizeTreeNode? %d\n", success);
 
 			success = 0;
 			addrTreeRoot = addrTreeRemove(addrTreeRoot, &prev->addrTreeNode, &success);
-			fprintf(stderr, "REMOVED pred addrTreeNode?  %d\n", success);
+			fprintf(stderr, "REMOVED pred addrTreeNode? %d\n", success);
 
 			size_t prevSize = prev->size + curr->size + sizeof(AllocStruct);
 			memset(curr, 0, sizeof(*curr));
@@ -513,6 +528,8 @@ void shmHeapFree(void *ptr)
 
 void shmHeapDisp(void)
 {
+	fprintf(stderr, "%s(): counterMalloc = %d: counterFree = %d.\n", __func__, counterMalloc, counterFree);
+
 	fprintf(stderr, "This is the Size Tree:\n");
 	sizeTreeTraverse(sizeTreeRoot);
 	fprintf(stderr, "\n");
