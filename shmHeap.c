@@ -447,14 +447,14 @@ static void _shmHeapFree(void *ptr)
 	if(next->allocated == 0) {
 		int success = 0;
 		sizeTreeRoot = sizeTreeRemoveNode(sizeTreeRoot, &next->sizeTreeNode, &success);
-		fprintf(stderr, "REMOVED sizeTreeNode %p? %d\n", &next->sizeTreeNode, success);
+		//fprintf(stderr, "REMOVED sizeTreeNode %p? %d\n", &next->sizeTreeNode, success);
 		if(success == 0) {
 			fprintf(stderr, "ERROR: Unable to locate sizeTreeNode.\n");
 		}
 
 		success = 0;
 		addrTreeRoot = addrTreeRemove(addrTreeRoot, &next->addrTreeNode, &success);
-		fprintf(stderr, "REMOVED addrTreeNode %p? %d\n", &next->addrTreeNode, success);
+		//fprintf(stderr, "REMOVED addrTreeNode %p? %d\n", &next->addrTreeNode, success);
 		if(success == 0) {
 			fprintf(stderr, "ERROR: Unable to locate addrTreeNode.\n");
 		}
@@ -473,20 +473,26 @@ static void _shmHeapFree(void *ptr)
 		 * previous block that is unallocated.  We now need to look and
 		 * see if that block is adjacent to the block we're freeing. */
 		AllocStruct *prev = pred->ptr;
-		fprintf(stderr, "prev->magic = %08x: prev->allocated = %d\n", prev->magic, prev->allocated);
+		//fprintf(stderr, "prev->magic = %08x: prev->allocated = %d\n", prev->magic, prev->allocated);
 
 		AllocStruct *prev2 = (AllocStruct *) ((unsigned char *) prev + sizeof(AllocStruct) + prev->size);
-		fprintf(stderr, "prev2->magic = %08x: prev2->allocated = %d\n", prev2->magic, prev2->allocated);
+		//fprintf(stderr, "prev2->magic = %08x: prev2->allocated = %d\n", prev2->magic, prev2->allocated);
 
-		fprintf(stderr, "prev2 %p : curr %p\n", prev2, curr);
+		//fprintf(stderr, "prev2 %p : curr %p\n", prev2, curr);
 		if(prev2 == curr) {
 			int success = 0;
 			sizeTreeRoot = sizeTreeRemoveNode(sizeTreeRoot, &prev->sizeTreeNode, &success);
-			fprintf(stderr, "REMOVED pred sizeTreeNode? %d\n", success);
+			//fprintf(stderr, "REMOVED pred sizeTreeNode? %d\n", success);
+			if(success == 0) {
+				fprintf(stderr, "ERROR: Unable to locate sizeTreeNode.\n");
+			}
 
 			success = 0;
 			addrTreeRoot = addrTreeRemove(addrTreeRoot, &prev->addrTreeNode, &success);
-			fprintf(stderr, "REMOVED pred addrTreeNode? %d\n", success);
+			//fprintf(stderr, "REMOVED pred addrTreeNode? %d\n", success);
+			if(success == 0) {
+				fprintf(stderr, "ERROR: Unable to locate addrTreeNode.\n");
+			}
 
 			size_t prevSize = prev->size + curr->size + sizeof(AllocStruct);
 			memset(curr, 0, sizeof(*curr));
