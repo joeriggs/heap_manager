@@ -1,4 +1,6 @@
 
+#define __STDC_FORMAT_MACROS
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -17,8 +19,7 @@
 
 struct allocStruct;
 
-static void *_shmHeapMalloc(size_t size);
-static void _shmHeapFree(void *ptr);
+static void _shmHeapFree(void *ptr, int external);
 
 #define SHM_HEAP_MAGIC 0xDEBB1E83
 
@@ -305,6 +306,16 @@ static AddrTree *addrTreeRemove(AddrTree *tree, AddrTree *node, int *status)
  ******************************************************************************
  ******************************************************************************/
 
+/* There is exactly one of these data structures.  It's used to store private
+ * data. */
+typedef struct privateData {
+	uint64_t counterFree;
+	uint64_t bytesFree;
+	uint64_t counterMalloc;
+	uint64_t bytesMalloc;
+} privateData;
+static privateData *privData = NULL;
+
 /* This is the data structure that is used for each chunk of allocated mem. */
 typedef struct allocStruct {
 	uint32_t magic;
@@ -321,44 +332,6 @@ typedef struct allocStruct {
 	unsigned char data[0];
 } AllocStruct;
 static size_t AllocStructDataOffset = (size_t) (&((AllocStruct *)0)->data);
-
-static int counterMalloc = 0;
-static int counterFree = 0;
-
-/* This function can be called more than once if you want to manage more than
- * 1 chunk of memory.
- */
-void shmHeapInit(unsigned char *heap, size_t size)
-{
-	unsigned char *heapEnd = heap + size;
-
-	/* Create a dummy AllocStruct data structure at the end of this heap.
-	 * We use that data structure as a flag to let us know it's the end of
-	 * this heap (and we can't go past it). */
-	AllocStruct *endStruct = (AllocStruct *) (heapEnd - sizeof(AllocStruct));
-	endStruct->magic = SHM_HEAP_MAGIC;
-	endStruct->size = 0;
-	endStruct->allocated = 1;
-
-	endStruct->addrTreeNode.ptr = endStruct;
-	addrTreeRoot = addrTreeInsertNode(addrTreeRoot, &endStruct->addrTreeNode);
-
-	endStruct->sizeTreeNode.size = 0;
-	endStruct->sizeTreeNode.ptr = endStruct;
-	sizeTreeRoot = sizeTreeInsertNode(sizeTreeRoot, &endStruct->sizeTreeNode);
-
-	/* Adjust size to allow for endStruct. */
-	size -= sizeof(*endStruct);
-
-	/* Create an AllocStruct data structure that matches the format that is
-	 * created by shmHeapMalloc().  Then pass it to _shmHeapFree().  This
-	 * way it looks like a regular call to _shmHeapFree(). */
-	AllocStruct *newStruct = (AllocStruct *) heap;
-	newStruct->magic = SHM_HEAP_MAGIC;
-	newStruct->size = size - AllocStructDataOffset;
-	newStruct->allocated = 1;
-	_shmHeapFree(newStruct->data);
-}
 
 static void *_shmHeapMalloc(size_t size)
 {
@@ -385,6 +358,8 @@ static void *_shmHeapMalloc(size_t size)
 	if(success == 0) {
 		fprintf(stderr, "%s(): ERROR: Didn't find matching addr node\n", __func__);
 	}
+
+	privData->bytesMalloc += size;
 
 	/* Calculate the total number of bytes required to service this alloc
 	 * request, and calculate the number of left over bytes in this chunk
@@ -416,13 +391,18 @@ static void *_shmHeapMalloc(size_t size)
 		extra->sizeTreeNode.size = extra->size;
 		extra->sizeTreeNode.ptr = extra;
 		extra->addrTreeNode.ptr = extra;
-		_shmHeapFree(extra->data);
+		_shmHeapFree(extra->data, 0);
 	}
 
 	return curr->data;
 }
 
-static void _shmHeapFree(void *ptr)
+/* The "external" argument lets us know whether this call is coming from an
+ * external source.  If it is, then we want to add the amount of freed memory to
+ * our internal counters.  If it's an internal call, then don't add to the
+ * internal counters.
+ */
+static void _shmHeapFree(void *ptr, int external)
 {
 	if(ptr == NULL) {
 		return;
@@ -435,13 +415,23 @@ static void _shmHeapFree(void *ptr)
 		return;
 	}
 
+	if(curr->allocated != 1) {
+		fprintf(stderr, "%s(): ERROR: Memory at %p is not currently allocated.\n",
+		        __func__, ptr);
+		return;
+	}
+
+	if(external) {
+		privData->bytesFree += curr->size;
+	}
+
 	/* Check to see if the next memory block (a.k.a. the successor) is
 	 * currently free.  If it is, combine it with this memory block.  This
 	 * reduces fragmentation. */
 	AllocStruct *next = (AllocStruct *) ((unsigned char *) curr +
 	                    AllocStructDataOffset + curr->size);
 	if(next->magic != SHM_HEAP_MAGIC) {
-		fprintf(stderr, "%s(): ERROR: Invalid header.\n", __func__);
+		fprintf(stderr, "%s(): ERROR: Invalid header at next.\n", __func__);
 		return;
 	}
 	if(next->allocated == 0) {
@@ -520,21 +510,75 @@ static void _shmHeapFree(void *ptr)
 	sizeTreeRoot = sizeTreeInsertNode(sizeTreeRoot, &curr->sizeTreeNode);
 }
 
+/*******************************************************************************
+ * Public API starts here.
+ ******************************************************************************/
+
+/* This function can be called more than once if you want to manage more than
+ * 1 chunk of memory.
+ */
+void shmHeapInit(unsigned char *heap, size_t size)
+{
+	/* Set up our private data area at the beginning of the first heap
+	 * chunk that is passed to us. */
+	if(privData == NULL) {
+		privData = (privateData *) heap;
+		memset(privData, 0, sizeof(*privData));
+		heap += sizeof(*privData);
+		size -= sizeof(*privData);
+		fprintf(stderr, "%s(): privData %p: (%" PRIu64 " %" PRIu64 ") (%" PRIu64 " %" PRIu64 ").\n",
+		        __func__, privData, privData->counterMalloc, privData->bytesMalloc,
+		        privData->counterFree, privData->bytesFree);
+	}
+
+	unsigned char *heapEnd = heap + size;
+
+	/* Create a dummy AllocStruct data structure at the end of this heap.
+	 * We use that data structure as a flag to let us know it's the end of
+	 * this heap (and we can't go past it). */
+	AllocStruct *endStruct = (AllocStruct *) (heapEnd - sizeof(AllocStruct));
+	endStruct->magic = SHM_HEAP_MAGIC;
+	endStruct->size = 0;
+	endStruct->allocated = 1;
+
+	endStruct->addrTreeNode.ptr = endStruct;
+	addrTreeRoot = addrTreeInsertNode(addrTreeRoot, &endStruct->addrTreeNode);
+
+	endStruct->sizeTreeNode.size = 0;
+	endStruct->sizeTreeNode.ptr = endStruct;
+	sizeTreeRoot = sizeTreeInsertNode(sizeTreeRoot, &endStruct->sizeTreeNode);
+
+	/* Adjust size to allow for endStruct. */
+	size -= sizeof(*endStruct);
+
+	/* Create an AllocStruct data structure that matches the format that is
+	 * created by shmHeapMalloc().  Then pass it to _shmHeapFree().  This
+	 * way it looks like a regular call to _shmHeapFree(). */
+	AllocStruct *newStruct = (AllocStruct *) heap;
+	newStruct->magic = SHM_HEAP_MAGIC;
+	newStruct->size = size - AllocStructDataOffset;
+	newStruct->allocated = 1;
+	_shmHeapFree(newStruct->data, 0);
+}
+
 void *shmHeapMalloc(size_t size)
 {
-	counterMalloc++;
+	privData->counterMalloc++;
 	return _shmHeapMalloc(size);
 }
 
 void shmHeapFree(void *ptr)
 {
-	counterFree++;
-	_shmHeapFree(ptr);
+	privData->counterFree++;
+	_shmHeapFree(ptr, 1);
 }
 
 void shmHeapDisp(void)
 {
-	fprintf(stderr, "%s(): counterMalloc = %d: counterFree = %d.\n", __func__, counterMalloc, counterFree);
+	fprintf(stderr, "%s(): counterMalloc %" PRIu64 ": bytesMalloc %" PRIu64 ").\n",
+	        __func__, privData->counterMalloc, privData->bytesMalloc);
+	fprintf(stderr, "%s(): counterFree %" PRIu64 ": bytesFree %" PRIu64 ").\n",
+	        __func__, privData->counterFree, privData->bytesFree);
 
 	fprintf(stderr, "This is the Size Tree:\n");
 	sizeTreeTraverse(sizeTreeRoot);
